@@ -1,0 +1,14 @@
+{
+  "Name": "Terraform Plan Reader",
+  "Description": "Read-only extras that terraform plan needs beyond Reader (list app settings, AKS user kubeconfig, storage keys). Cannot change resources.",
+  "Actions": [
+    "Microsoft.Web/sites/config/list/action",
+    "Microsoft.Web/sites/host/listkeys/action",
+    "Microsoft.ContainerService/managedClusters/listClusterUserCredential/action",
+    "Microsoft.Storage/storageAccounts/listKeys/action"
+  ],
+  "NotActions": [],
+  "AssignableScopes": [
+    "/subscriptions/00000000-0000-0000-0000-000000000000"
+  ]
+}

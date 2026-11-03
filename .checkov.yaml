@@ -1,0 +1,48 @@
+# Checkov config used by CI and locally: checkov -d . --config-file .checkov.yaml
+# Every skipped check has a reason. Same baseline as terraform-modules, plus a few infra-only items.
+framework:
+  - terraform
+compact: true
+quiet: true
+# Also scan the remote modules (pinned by ?ref=), so the final config is checked as a whole.
+download-external-modules: true
+skip-check:
+  # --- Cost / high availability: decided per environment, not forced by a module ---
+  - CKV_AZURE_170  # AKS paid SLA tier: sku_tier is a variable (set Standard in prod)
+  - CKV_AZURE_211  # App Service plan "production" SKU: sku_name is a variable
+  - CKV_AZURE_212  # App Service minimum instance count: set per environment
+  - CKV_AZURE_225  # App Service plan zone redundancy: needs Premium SKU
+  - CKV_AZURE_229  # SQL zone redundancy: not available on Basic, set per environment
+  - CKV_AZURE_165  # ACR geo-replication: multi-region only
+  - CKV_AZURE_233  # ACR zone redundancy: automatic in zone-enabled regions
+  - CKV_AZURE_206  # Storage replication: account_replication_type is a variable (default ZRS)
+  # --- Customer-managed keys: platform-managed keys are used by default ---
+  - CKV2_AZURE_1   # Storage CMK
+  - CKV_AZURE_117  # AKS disk encryption set (CMK)
+  # --- Logging goes to Log Analytics through diagnostic settings, not the legacy settings checked here ---
+  - CKV_AZURE_63   # App Service HTTP logs
+  - CKV_AZURE_65   # App Service detailed error messages
+  - CKV_AZURE_66   # App Service failed request tracing
+  - CKV_AZURE_33   # Storage queue logging (classic)
+  - CKV2_AZURE_21  # Storage blob read logging (classic)
+  - CKV_AZURE_24   # SQL audit retention > 90 days: retention is set on the Log Analytics workspace
+  # --- Not applicable or app-specific ---
+  - CKV_AZURE_13   # App Service built-in auth: the .NET app handles authentication
+  - CKV_AZURE_17   # Client certificates: only for mutual-TLS APIs
+  - CKV_AZURE_88   # Azure Files mount: app does not need shared storage
+  - CKV_AZURE_221  # Function App public access: variable, default true for public HTTP triggers
+  - CKV_AZURE_222  # Web App public access: variable, default true for a public website
+  - CKV_AZURE_224  # SQL ledger: only for tamper-evidence workloads
+  - CKV2_AZURE_2   # SQL VA with storage account: express vulnerability assessment is enabled instead
+  - CKV_AZURE_164  # ACR content trust: Docker Content Trust is retired, use Notation signing
+  - CKV_AZURE_166  # ACR quarantine: needs an external scanner workflow
+  - CKV_AZURE_237  # ACR dedicated data endpoints: private endpoint already covers data traffic
+  - CKV_AZURE_168  # AKS max pods >= 50: CNI Overlay default is 250
+  - CKV_AZURE_226  # AKS ephemeral OS disk: needs a VM size with a large enough cache/temp disk
+  - CKV_AZURE_50   # VM extensions: needed for monitoring agent and run-command
+  # --- Checkov false positive ---
+  - CKV_AZURE_59   # Storage public access: checks the deprecated public_network_access_enabled; module sets public_network_access = "Disabled"
+  # --- Infra repo only ---
+  - CKV_TF_1       # Module source by commit hash: we pin our own release tags (?ref=v1.0.0); protect tags with a tag ruleset
+  - CKV2_AZURE_33  # State storage private endpoint: GitHub-hosted runners need the public endpoint (Entra ID + RBAC only, no keys)
+  - CKV_AZURE_163  # ACR image vulnerability scanning: needs Microsoft Defender for Containers (paid), enable per environment

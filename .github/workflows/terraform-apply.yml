@@ -1,0 +1,169 @@
+name: terraform-apply
+
+# Runs after a PR is merged to main. Applies only the layers that changed,
+# in layer order (01 -> 05), environment by environment: dev -> test -> prod.
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+env:
+  TF_VERSION: "1.17.1"
+  TF_IN_AUTOMATION: "true"
+
+# Never run two applies at the same time, and never cancel one halfway.
+concurrency:
+  group: terraform-apply
+  cancel-in-progress: false
+
+jobs:
+  detect:
+    name: detect changed layers
+    runs-on: ubuntu-latest
+    outputs:
+      dev: ${{ steps.changes.outputs.dev }}
+      test: ${{ steps.changes.outputs.test }}
+      prod: ${{ steps.changes.outputs.prod }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      # Output per environment: space-separated layer folders in order, for example
+      # dev="envs/dev/01-network envs/dev/03-data"
+      - name: Find changed layers
+        id: changes
+        run: |
+          files=$(git diff --name-only "${{ github.event.before }}" "${{ github.sha }}")
+
+          for env in dev test prod; do
+            if echo "$files" | grep -q '^modules/tags/'; then
+              dirs=$(ls -d envs/$env/* | sort)
+            else
+              dirs=$(echo "$files" | grep "^envs/$env/" | cut -d/ -f1-3 | sort -u || true)
+            fi
+
+            existing=""
+            for dir in $dirs; do
+              if [ -d "$dir" ]; then existing="$existing $dir"; fi
+            done
+
+            echo "$env:$existing"
+            echo "$env=$(echo $existing)" >> "$GITHUB_OUTPUT"
+          done
+
+  apply-dev:
+    name: apply dev
+    needs: detect
+    if: needs.detect.outputs.dev != ''
+    runs-on: ubuntu-latest
+    # GitHub Environment "dev": holds AZURE_CLIENT_ID of the dev identity.
+    # The federated credential trusts only subject repo:krishnareddydotnet/krconnects-infra:environment:dev
+    environment: dev
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+          terraform_wrapper: false
+
+      - name: Azure login (OIDC, no secrets)
+        uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: terraform apply (changed layers, in order)
+        run: |
+          for dir in ${{ needs.detect.outputs.dev }}; do
+            echo "::group::$dir"
+            terraform -chdir="$dir" init -input=false
+            terraform -chdir="$dir" plan -input=false -var-file="dev.tfvars" -out=tfplan
+            terraform -chdir="$dir" apply -input=false tfplan
+            echo "::endgroup::"
+          done
+
+  apply-test:
+    name: apply test
+    needs: [detect, apply-dev]
+    # Run when test changed and dev did not fail (dev may be skipped if it had no changes).
+    if: ${{ !failure() && !cancelled() && needs.detect.outputs.test != '' }}
+    runs-on: ubuntu-latest
+    environment: test
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+          terraform_wrapper: false
+
+      - name: Azure login (OIDC, no secrets)
+        uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: terraform apply (changed layers, in order)
+        run: |
+          for dir in ${{ needs.detect.outputs.test }}; do
+            echo "::group::$dir"
+            terraform -chdir="$dir" init -input=false
+            terraform -chdir="$dir" plan -input=false -var-file="test.tfvars" -out=tfplan
+            terraform -chdir="$dir" apply -input=false tfplan
+            echo "::endgroup::"
+          done
+
+  apply-prod:
+    name: apply prod
+    needs: [detect, apply-test]
+    if: ${{ !failure() && !cancelled() && needs.detect.outputs.prod != '' }}
+    runs-on: ubuntu-latest
+    # Environment "prod" has required reviewers: the job waits here for manual approval.
+    environment: prod
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+          terraform_wrapper: false
+
+      - name: Azure login (OIDC, no secrets)
+        uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: terraform apply (changed layers, in order)
+        run: |
+          for dir in ${{ needs.detect.outputs.prod }}; do
+            echo "::group::$dir"
+            terraform -chdir="$dir" init -input=false
+            terraform -chdir="$dir" plan -input=false -var-file="prod.tfvars" -out=tfplan
+            terraform -chdir="$dir" apply -input=false tfplan
+            echo "::endgroup::"
+          done
