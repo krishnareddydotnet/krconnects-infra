@@ -42,3 +42,13 @@ terraform.rc
 # Optional: ignore plan files saved before destroying Terraform configuration
 # Uncomment the line below if you want to ignore planout files.
 # planout
+# Saved plan files (a saved plan can contain secrets)
+*.tfplan
+tfplan
+
+# Non-secret environment values ARE committed (envs/<env>/<layer>/<env>.tfvars).
+# Secrets never go in tfvars: they live in Key Vault.
+!envs/**/*.tfvars
+
+# Checkov downloads remote modules here when scanning
+.external_modules/
